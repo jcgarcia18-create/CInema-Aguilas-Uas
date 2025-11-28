@@ -48,9 +48,14 @@ class PlaybackController extends Controller
 
         try {
             // Intenta guardar en MongoDB
+
+            // Obtener el nombre de la película
+            $pelicula = \App\Models\Peliculas::find($data['pelicula_id']);
+            $nombrePelicula = $pelicula ? $pelicula->title : null;
+
             HistorialVista::updateOrCreate(
                 ['perfil_id' => $perfilId, 'pelicula_id' => $data['pelicula_id']],
-                []
+                ['nombre_pelicula' => $nombrePelicula]
             );
 
            

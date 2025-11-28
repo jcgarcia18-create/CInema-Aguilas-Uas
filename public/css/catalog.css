@@ -21,7 +21,16 @@ body{font-family: 'Poppins', sans-serif; background: var(--bg); color: #fff; mar
 .catalog-header h1{color:var(--accent); margin:0 0 .25rem}
 .catalog-grid{display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:1.25rem}
 
-.card{background:var(--card-bg); border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,0.5); display:flex; flex-direction:column}
+.card{
+    background:var(--card-bg);
+    border-radius:10px;
+    overflow:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,0.5);
+    display:flex;
+    flex-direction:column;
+    min-height: 480px;
+    max-height: 480px;
+}
 .card-thumb {
     height: 320px;
     display: flex;
@@ -43,10 +52,19 @@ body{font-family: 'Poppins', sans-serif; background: var(--bg); color: #fff; mar
 .card-thumb img.card-img:hover {
     transform: scale(1.05);
 }
-.card-body{padding:1rem; flex:1; display:flex; flex-direction:column}
-.card-title{color:var(--accent); margin:0 0 .25rem}
+.card-body{
+    padding:1rem;
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+    min-height: 160px;
+    max-height: 160px;
+    overflow: hidden;
+}
+.card-title{color:var(--accent); margin:0 0 .25rem; font-size:1.1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .card-meta{font-size:.85rem; color:#d1d1d1; margin-bottom:.5rem}
-.card-desc{flex:1; font-size:.95rem; color:#e6e6e6}
+.card-desc{flex:1; font-size:.95rem; color:#e6e6e6; overflow:hidden; text-overflow:ellipsis;}
 .card-actions{margin-top:1rem; display:flex; gap:.5rem}
 
 /* Botones (re-utilizables) */

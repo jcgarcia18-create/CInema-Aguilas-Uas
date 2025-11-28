@@ -104,7 +104,7 @@
                                         <div class="movie-actions">
                                                 <a href="javascript:void(0)" 
                                                                  class="btn-play" 
-                                                                 onclick="logView('{{ $pelicula->id }}')">
+                                                                 onclick="logView('{{ $pelicula->id }}', '{{ $pelicula->video_url }}')">
                                                                  ▶ Reproducir
                                                              </a>
                                         </div>

@@ -3,7 +3,7 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Peliculas; // ¡Asegúrate de que esta línea esté presente!
+use App\Models\Peliculas;// ¡Asegúrate de que esta línea esté presente!
 
 class PeliculasSeeder extends Seeder
 {
@@ -20,7 +20,7 @@ class PeliculasSeeder extends Seeder
             'title' => 'El Caballero Oscuro',
             'description' => 'Tras el asesinato del fiscal Harvey Dent, Batman asume la responsabilidad de los crímenes de Dent para proteger su reputación y la esperanza que representa.',
             'poster_url' => 'https://macguffin007.com/wp-content/uploads/2018/07/El-caballero-oscuro.jpg',
-            'video_url' => 'https://example.com/videos/dark_knight.mp4',
+            'video_url' => 'https://www.youtube.com/watch?v=kmJLuwP3MbY',
             'duration_minutes' => 152,
             'genre' => 'Acción, Crimen',
         ]);

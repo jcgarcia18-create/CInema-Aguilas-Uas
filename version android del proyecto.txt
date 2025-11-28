@@ -1,0 +1,2609 @@
+//AQUI PONDRE TODO EL CODIGO DEL PROYECTO ANDROID STUDIO PARA QUE LO CORRIJAS Y PUEDA CONECTARSE A LAS APIS peliculas, user y favorito
+package com.example.tallerintegrador.auth.state
+
+import com.example.tallerintegrador.data.model.LoginResponse
+
+sealed class AuthState {
+    object Idle : AuthState()
+    object Loading : AuthState()
+    data class Success(val authResponse: LoginResponse) : AuthState()
+    data class Error(val message: String) : AuthState()
+}
+////
+package com.example.tallerintegrador.auth
+
+import android.app.Application
+import android.util.Log
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.tallerintegrador.auth.state.AuthState
+import com.example.tallerintegrador.data.local.TokenManager
+import com.example.tallerintegrador.data.model.*
+import com.example.tallerintegrador.data.network.RetrofitClient
+import kotlinx.coroutines.launch
+
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
+    val authState = mutableStateOf<AuthState>(AuthState.Idle)
+
+    //  Gestor de tokens
+    private val tokenManager = TokenManager(application.applicationContext)
+
+    init {
+        // Verificar si hay sesión activa al iniciar
+        if (tokenManager.isLoggedIn()) {
+            authState.value = AuthState.Success(
+                LoginResponse(
+                    accessToken = tokenManager.getToken() ?: "",
+                    tokenType = "Bearer",
+                    user = User(
+                        id = tokenManager.getUserId(),
+                        name = tokenManager.getUserName() ?: "",
+                        email = tokenManager.getUserEmail() ?: ""
+                    )
+                )
+            )
+        }
+    }
+
+    fun login(loginRequest: LoginRequest) {
+        viewModelScope.launch {
+            authState.value = AuthState.Loading
+            try {
+                val response = RetrofitClient.instance.login(loginRequest)
+
+                //  GUARDAR TOKEN Y DATOS DE USUARIO
+                tokenManager.saveAuthData(
+                    token = response.accessToken,
+                    userId = response.user.id,
+                    userName = response.user.name,
+                    userEmail = response.user.email
+                )
+
+                authState.value = AuthState.Success(response)
+                Log.d("AuthViewModel", "Login exitoso - Token guardado")
+            } catch (e: Exception) {
+                Log.e("AuthViewModel", "Login failed", e)
+                authState.value = AuthState.Error("Error en el login: ${e.message}")
+            }
+        }
+    }
+
+    fun register(registerRequest: RegisterRequest) {
+        viewModelScope.launch {
+            authState.value = AuthState.Loading
+            try {
+                val response = RetrofitClient.instance.register(registerRequest)
+
+                //  GUARDAR TOKEN Y DATOS DE USUARIO
+                tokenManager.saveAuthData(
+                    token = response.accessToken,
+                    userId = response.user.id,
+                    userName = response.user.name,
+                    userEmail = response.user.email
+                )
+
+                authState.value = AuthState.Success(response)
+                Log.d("AuthViewModel", "Registro exitoso - Token guardado")
+            } catch (e: Exception) {
+                Log.e("AuthViewModel", "Registration failed", e)
+                authState.value = AuthState.Error("Error en el registro: ${e.message}")
+            }
+        }
+    }
+
+    // Función para cerrar sesión
+    fun logout() {
+        tokenManager.clearSession()
+        authState.value = AuthState.Idle
+        Log.d("AuthViewModel", "Sesión cerrada")
+    }
+
+    // Obtener token actual
+    fun getToken(): String? = tokenManager.getToken()
+}
+package com.example.tallerintegrador.core
+
+import android.app.Application
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import com.example.tallerintegrador.data.network.RetrofitClient
+import com.example.tallerintegrador.data.repository.FavoritosRepository
+import com.example.tallerintegrador.feature.favoritos.FavoritosViewModel
+
+class FavoritosViewModelFactory(
+    private val application: Application
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(FavoritosViewModel::class.java)) {
+            val apiService = RetrofitClient.instance
+            val repository = FavoritosRepository(apiService)
+            @Suppress("UNCHECKED_CAST")
+            return FavoritosViewModel(application, repository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+package com.example.tallerintegrador.core
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import com.example.tallerintegrador.data.repository.PeliculaRepository
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+
+class ViewModelFactory(private val repository: PeliculaRepository) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(PeliculaViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return PeliculaViewModel(repository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+package com.example.tallerintegrador.data.local
+
+import android.content.Context
+import androidx.core.content.edit
+
+/**
+ * Gestor de tokens y sesión de usuario
+ * Guarda el token de acceso y la información del usuario en SharedPreferences
+ */
+class TokenManager(context: Context) {
+
+    private val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+
+    companion object {
+        private const val TOKEN_KEY = "access_token"
+        private const val USER_ID_KEY = "user_id"
+        private const val USER_NAME_KEY = "user_name"
+        private const val USER_EMAIL_KEY = "user_email"
+    }
+
+    // Guardar token y datos de usuario
+    fun saveAuthData(token: String, userId: Int, userName: String, userEmail: String) {
+        prefs.edit {
+            putString(TOKEN_KEY, token)
+            putInt(USER_ID_KEY, userId)
+            putString(USER_NAME_KEY, userName)
+            putString(USER_EMAIL_KEY, userEmail)
+        }
+    }
+
+    // Obtener token
+    fun getToken(): String? = prefs.getString(TOKEN_KEY, null)
+
+    // Obtener ID de usuario
+    fun getUserId(): Int = prefs.getInt(USER_ID_KEY, -1)
+
+    // Obtener nombre de usuario
+    fun getUserName(): String? = prefs.getString(USER_NAME_KEY, null)
+
+    // Obtener email de usuario
+    fun getUserEmail(): String? = prefs.getString(USER_EMAIL_KEY, null)
+
+    // Verificar si hay sesión activa
+    fun isLoggedIn(): Boolean = getToken() != null
+
+    // Limpiar sesión (logout)
+    fun clearSession() {
+        prefs.edit {
+            clear()
+        }
+    }
+}
+package com.example.tallerintegrador.data.model
+import com.google.gson.annotations.SerializedName
+
+data class pelicula(
+    @SerializedName("id")
+    val id: Int,
+    @SerializedName("title")
+    val title: String,
+    @SerializedName("description")
+    val description: String,
+    @SerializedName("poster_url")
+    val posterUrl: String,
+    @SerializedName("video_url")
+    val videoUrl: String,
+    @SerializedName("duration_minutes")
+    val durationMinutes: Int,
+    @SerializedName("genre")
+    val genre: String,
+    @SerializedName("created_at")
+    val createdAt: String? = null,
+    @SerializedName("updated_at")
+    val updatedAt: String? = null,
+
+    // Campo local para manejar estado en la UI, no viene del JSON
+    val esFavorita: Boolean = false
+)
+package com.example.tallerintegrador.data.model
+
+import com.google.gson.annotations.SerializedName
+
+/**
+ * Representa la estructura de datos del usuario recibida desde la API.
+ */
+data class User(
+    @SerializedName("id")
+    val id: Int,
+    @SerializedName("name")
+    val name: String,
+    @SerializedName("email")
+    val email: String,
+    @SerializedName("suscripcion_activa")
+    val suscripcionActiva: Boolean = false,
+    @SerializedName("created_at")
+    val createdAt: String? = null
+)
+
+/**
+ * Objeto enviado al servidor para iniciar sesión.
+ */
+data class LoginRequest(
+    val email: String,
+    val password: String
+)
+
+/**
+ * Respuesta recibida del servidor tras un inicio de sesión exitoso.
+ */
+data class LoginResponse(
+    @SerializedName("access_token")
+    val accessToken: String,
+
+    @SerializedName("token_type")
+    val tokenType: String,
+
+    val user: User
+)
+
+/**
+ * Objeto enviado al servidor para registrar un nuevo usuario.
+ */
+data class RegisterRequest(
+    val name: String,
+    val email: String,
+    val password: String
+)
+
+package com.example.tallerintegrador.data.network
+
+import com.example.tallerintegrador.data.model.*
+import retrofit2.http.*
+
+interface ApiService {
+
+    // ---------- AUTENTICACIÓN ----------
+
+    @POST("api/login")
+    suspend fun login(@Body request: LoginRequest): LoginResponse
+
+    @POST("api/register")
+    suspend fun register(@Body request: RegisterRequest): LoginResponse
+
+    // ---------- PELÍCULAS ----------
+
+    @GET("api/peliculas")
+    suspend fun getPeliculas(): List<pelicula>
+
+    // ---------- FAVORITOS ----------
+
+    // Lista de películas favoritas del usuario autenticado
+    @GET("api/favoritos")
+    suspend fun getFavoritos(
+        @Header("Authorization") authHeader: String
+    ): List<pelicula>
+
+    // Agregar una película a favoritos
+    @POST("api/favoritos/{peliculaId}")
+    suspend fun addFavorito(
+        @Header("Authorization") authHeader: String,
+        @Path("peliculaId") peliculaId: Int
+    )
+
+    // Quitar una película de favoritos
+    @DELETE("api/favoritos/{peliculaId}")
+    suspend fun removeFavorito(
+        @Header("Authorization") authHeader: String,
+        @Path("peliculaId") peliculaId: Int
+    )
+
+    // Verificar si una película es favorita
+    // La API debe devolver algo como: { "is_favorite": true }
+    @GET("api/favoritos/check/{peliculaId}")
+    suspend fun checkFavorito(
+        @Header("Authorization") authHeader: String,
+        @Path("peliculaId") peliculaId: Int
+    ): Map<String, Boolean>
+}
+package com.example.tallerintegrador.data.network
+
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+
+object RetrofitClient {
+    private const val BASE_URL = "http://10.0.2.2:8000/"
+
+    val instance: ApiService by lazy {
+        // Creamos un interceptor para loggear el cuerpo de las peticiones y respuestas
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }
+
+        // Creamos un cliente de OkHttp y le añadimos el interceptor
+        val client = OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .build()
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(client) // Usamos el cliente personalizado
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+
+        retrofit.create(ApiService::class.java)
+    }
+}
+package com.example.tallerintegrador.data.repository
+
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.data.network.ApiService
+
+class FavoritosRepository(
+    private val apiService: ApiService
+) {
+
+    /**
+     * Obtiene la lista de películas favoritas del usuario.
+     * @param token Token puro (sin "Bearer "), por ejemplo: "123abc..."
+     */
+    suspend fun getFavoritos(token: String): List<pelicula> {
+        return apiService.getFavoritos("Bearer $token")
+    }
+
+    /**
+     * Agrega una película a favoritos.
+     */
+    suspend fun addFavorito(token: String, peliculaId: Int) {
+        apiService.addFavorito("Bearer $token", peliculaId)
+    }
+
+    /**
+     * Elimina una película de favoritos.
+     */
+    suspend fun removeFavorito(token: String, peliculaId: Int) {
+        apiService.removeFavorito("Bearer $token", peliculaId)
+    }
+
+    /**
+     * Verifica si una película es favorita.
+     */
+    suspend fun isFavorito(token: String, peliculaId: Int): Boolean {
+        return try {
+            val response = apiService.checkFavorito("Bearer $token", peliculaId)
+            response["is_favorite"] ?: false
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+package com.example.tallerintegrador.data.repository
+
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.data.network.ApiService
+
+class PeliculaRepository(private val apiService: ApiService) {
+    suspend fun getPeliculas(): List<pelicula> {
+        return apiService.getPeliculas()
+    }
+}
+package com.example.tallerintegrador.feature.favoritos
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.tallerintegrador.data.local.TokenManager
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.data.repository.FavoritosRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+class FavoritosViewModel(
+    application: Application,
+    private val repository: FavoritosRepository
+) : AndroidViewModel(application) {
+
+    private val tokenManager = TokenManager(application.applicationContext)
+
+    private val _favoritos = MutableStateFlow<List<pelicula>>(emptyList())
+    val favoritos: StateFlow<List<pelicula>> = _favoritos.asStateFlow()
+
+    private fun getTokenOrNull(): String? = tokenManager.getToken()
+
+    fun cargarFavoritos() {
+        viewModelScope.launch {
+            val token = getTokenOrNull() ?: return@launch
+            try {
+                _favoritos.value = repository.getFavoritos(token)
+            } catch (_: Exception) {
+                // Podrías loguear el error
+            }
+        }
+    }
+
+    fun toggleFavorito(peliculaId: Int, currentlyFavorite: Boolean) {
+        viewModelScope.launch {
+            val token = getTokenOrNull() ?: return@launch
+            try {
+                if (currentlyFavorite) {
+                    repository.removeFavorito(token, peliculaId)
+                } else {
+                    repository.addFavorito(token, peliculaId)
+                }
+                // Actualizamos la lista después del cambio
+                _favoritos.value = repository.getFavoritos(token)
+            } catch (_: Exception) {
+                // Manejo de errores si quieres
+            }
+        }
+    }
+
+    suspend fun esFavorito(peliculaId: Int): Boolean {
+        val token = getTokenOrNull() ?: return false
+        return repository.isFavorito(token, peliculaId)
+    }
+}
+
+package com.example.tallerintegrador.feature.peliculas
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.data.repository.PeliculaRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+class PeliculaViewModel(private val repository: PeliculaRepository) : ViewModel() {
+
+    // --- ESTADO PARA LA LISTA DE PELÍCULAS (HomeScreen) ---
+    private val _peliculas = MutableStateFlow<List<pelicula>>(emptyList())
+    val peliculas: StateFlow<List<pelicula>> = _peliculas.asStateFlow() // Usar asStateFlow es una mejor práctica
+
+    // --- NUEVO: ESTADO PARA UNA SOLA PELÍCULA (DetallePeliculaScreen) ---
+    private val _peliculaSeleccionada = MutableStateFlow<pelicula?>(null)
+    val peliculaSeleccionada: StateFlow<pelicula?> = _peliculaSeleccionada.asStateFlow()
+
+    /**
+     * Obtiene la lista completa de películas desde el repositorio.
+     * Usado por la pantalla principal (HomeScreen).
+     */
+    fun getPeliculas() {
+        viewModelScope.launch {
+            try {
+                val peliculasList = repository.getPeliculas()
+                _peliculas.value = peliculasList
+            } catch (e: Exception) {
+                // Manejar el error, por ejemplo, mostrando un mensaje en la UI
+                // _errorState.value = "No se pudieron cargar las películas"
+            }
+        }
+    }
+
+    /**
+     * NUEVO: Carga los detalles de una película específica por su título.
+     * Usado por la pantalla de detalles (DetallePeliculaScreen).
+     */
+    fun getPeliculaPorTitulo(titulo: String) {
+        viewModelScope.launch {
+            try {
+                // Simula la búsqueda en la lista ya cargada o podrías llamar a un nuevo método del repositorio.
+                // Para este ejemplo, buscamos en la lista que ya tenemos.
+                // En un caso real, sería mejor: repository.getPeliculaPorTitulo(titulo)
+                val peliculaEncontrada = _peliculas.value.find { it.title == titulo }
+                _peliculaSeleccionada.value = peliculaEncontrada
+            } catch (e: Exception) {
+                // Manejar el error
+                _peliculaSeleccionada.value = null
+            }
+        }
+    }
+
+
+    /**
+     * NUEVO: Cambia el estado de favorito de una película.
+     * Esta es la función que resuelve el warning "Assigned value is never read".
+     */
+    fun toggleFavoriteStatus(pelicula: pelicula) {
+        viewModelScope.launch {
+            // --- LÓGICA REAL DEBERÍA IR AQUÍ ---
+            // 1. Llama a tu repositorio para actualizar el estado en la base de datos o API.
+            //    Ejemplo: repository.updateFavoriteStatus(pelicula.id, !pelicula.esFavorita)
+
+            // 2. Por ahora, solo actualizaremos el estado en memoria para que la UI reaccione.
+            //    Actualizamos la película seleccionada con el nuevo estado de favorito.
+            _peliculaSeleccionada.value = _peliculaSeleccionada.value?.copy(
+                // Aquí necesitarías un campo como 'esFavorita' en tu data class
+                // esFavorita = !pelicula.esFavorita
+            )
+
+            // Solo para depuración, puedes imprimir un mensaje.
+            println("Cambiando estado de favorito para: ${pelicula.title}")
+        }
+    }
+}
+
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
+import com.example.tallerintegrador.auth.AuthViewModel
+import com.example.tallerintegrador.auth.state.AuthState
+import com.example.tallerintegrador.data.model.*
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.TallerIntegradorTheme
+import com.example.tallerintegrador.ui.theme.Yellow
+import kotlinx.coroutines.launch
+
+@Composable
+fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = viewModel()) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val authState by authViewModel.authState
+
+    // --- LÍNEA CORRECTA ---
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(authState) {
+        when (val state = authState) {
+            is AuthState.Success -> {
+                // Navega a la pantalla principal y limpia el stack de navegación
+                navController.navigate("home") { // Asumimos que "home" es tu pantalla principal
+                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                }
+            }
+            is AuthState.Error -> {
+                scope.launch {
+                    snackbarHostState.showSnackbar(state.message)
+                }
+            }
+            else -> {}
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+    )
+    { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // Padding del scaffold
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.login_background),
+                contentDescription = "Background",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.6f))
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // El resto de la UI
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email", color = Yellow) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors( // Renombrado a OutlinedTextFieldDefaults.colors
+                        unfocusedTextColor = Yellow,
+                        focusedTextColor = Yellow,
+                        cursorColor = Yellow,
+                        focusedBorderColor = Yellow,
+                        unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                        unfocusedLabelColor = Yellow, // Añadido para consistencia
+                        focusedLabelColor = Yellow // Añadido para consistencia
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña", color = Yellow) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    // --- CÓDIGO NUEVO Y CORRECTO ---
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedTextColor = Yellow,
+                        focusedTextColor = Yellow,cursorColor = Yellow,
+                        focusedBorderColor = Yellow,
+                        unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                        unfocusedLabelColor = Yellow, // Añadido para consistencia
+                        focusedLabelColor = Yellow // Añadido para consistencia
+                    )
+
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = { /* TODO: Recuperar contraseña */ },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("¿Olvidaste tu contraseña?", color = Yellow)
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { authViewModel.login(LoginRequest(email, password)) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    enabled = authState != AuthState.Loading
+                ) {
+                    Text("Comenzar ahora", color = DarkBlue, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                TextButton(onClick = { navController.navigate("register") }) {
+                    Text("¿No tienes cuenta? Regístrate", color = Yellow)
+                }
+            }
+
+            // Indicador de carga
+            if (authState == AuthState.Loading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LoginScreenPreview() {
+    TallerIntegradorTheme {
+        LoginScreen(rememberNavController())
+    }
+}
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
+import com.example.tallerintegrador.auth.AuthViewModel
+import com.example.tallerintegrador.auth.state.AuthState
+import com.example.tallerintegrador.data.model.*
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.TallerIntegradorTheme
+import com.example.tallerintegrador.ui.theme.Yellow
+import kotlinx.coroutines.launch
+
+@Composable
+fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = viewModel()) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val authState by authViewModel.authState
+
+    // --- LÍNEA NUEVA Y CORRECTA ---
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(authState) {
+        when (val state = authState) {
+            is AuthState.Success -> {
+                navController.navigate("home") {
+                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                }
+            }
+            is AuthState.Error -> {
+                scope.launch {
+                    // --- LÍNEA NUEVA Y CORRECTA ---
+                    snackbarHostState.showSnackbar(state.message)
+                }
+            }
+            else -> {}
+        }
+    }
+
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+    ) { paddingValues -> // <--- Le das un nombre explícito al parámetro
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // <--- Usas el nuevo nombre
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.login_background),
+                contentDescription = "Background",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.6f))
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre", color = Yellow) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedTextColor = Yellow,
+                        focusedTextColor = Yellow,
+                        cursorColor = Yellow,
+                        focusedBorderColor = Yellow,
+                        unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                        unfocusedLabelColor = Yellow,
+                        focusedLabelColor = Yellow
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email", color = Yellow) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedTextColor = Yellow,
+                        focusedTextColor = Yellow,
+                        cursorColor = Yellow,
+                        focusedBorderColor = Yellow,
+                        unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                        unfocusedLabelColor = Yellow,
+                        focusedLabelColor = Yellow
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña", color = Yellow) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedTextColor = Yellow,
+                        focusedTextColor = Yellow,
+                        cursorColor = Yellow,
+                        focusedBorderColor = Yellow,
+                        unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                        unfocusedLabelColor = Yellow,
+                        focusedLabelColor = Yellow
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { authViewModel.register(RegisterRequest(name, email, password)) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    enabled = authState != AuthState.Loading
+                ) {
+                    Text("Registrarse", color = DarkBlue, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                TextButton(onClick = { navController.popBackStack() }) {
+                    Text("¿Ya tienes cuenta? Inicia sesión", color = Yellow)
+                }
+            }
+
+            if (authState == AuthState.Loading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun RegisterScreenPreview() {
+    TallerIntegradorTheme {
+        RegisterScreen(rememberNavController())
+    }
+}
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.TallerIntegradorTheme
+import com.example.tallerintegrador.ui.theme.Yellow
+
+
+@Composable
+fun WelcomeScreen(navController: NavController) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Fondo con capa oscura
+        Image(
+            painter = painterResource(id = R.drawable.login_background), // Corregido
+            contentDescription = "Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+        )
+
+        // Contenido de la pantalla
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // TopBar - solo con botones a la derecha
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.End, // Alineado a la derecha
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = { navController.navigate("login") },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow)
+                ) {
+                    Text("Iniciar sesión", color = DarkBlue)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { navController.navigate("register") }, // Acción añadida
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow)
+                ) {
+                    Text("Registrarse", color = DarkBlue)
+                }
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Contenido Principal
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Tu cine en casa, fácil y rápido",
+                    color = Yellow,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Disfruta de tus películas y series favoritas en cualquier dispositivo",
+                    color = Yellow,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(60.dp)) // Espacio ajustado
+
+                // Título movido al centro
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "CINEMA ÁGUILAS UAS",
+                        color = Yellow,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 24.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "UNIVERSIDAD AUTÓNOMA DE SINALOA",
+                        color = Yellow.copy(alpha = 0.8f),
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(60.dp)) // Espacio ajustado
+
+                // Botones de acción
+                Button(
+                    onClick = { navController.navigate("login") },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(50.dp)
+                ) {
+                    Text("Comenzar ahora", color = DarkBlue, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(
+
+
+
+                    onClick = { navController.navigate("home") },
+
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(50.dp)
+                ) {
+                    Text("Ver catálogo", color = DarkBlue, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun WelcomeScreenPreview() {
+    TallerIntegradorTheme {
+        WelcomeScreen(rememberNavController())
+    }
+}
+
+package com.example.tallerintegrador
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
+import androidx.navigation.compose.*
+import androidx.navigation.navArgument
+import com.example.tallerintegrador.auth.AuthViewModel
+import com.example.tallerintegrador.core.ViewModelFactory
+import com.example.tallerintegrador.data.network.RetrofitClient
+import com.example.tallerintegrador.data.repository.PeliculaRepository
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+import com.example.tallerintegrador.ui.theme.TallerIntegradorTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            TallerIntegradorTheme {
+                MainNavigation()
+            }
+        }
+    }
+}
+
+@Composable
+fun MainNavigation() {
+    val navController = rememberNavController()
+
+    //  Crear una instancia única de AuthViewModel para toda la app
+    val authViewModel: AuthViewModel = viewModel()
+
+    // Dependencias para películas
+    val apiService = RetrofitClient.instance
+    val peliculaRepository = PeliculaRepository(apiService)
+    val peliculaViewModelFactory = ViewModelFactory(peliculaRepository)
+
+    NavHost(navController, startDestination = "welcome") {
+        composable("welcome") {
+            WelcomeScreen(navController)
+        }
+
+        composable("login") {
+            // ⭐ Pasar el mismo authViewModel
+            LoginScreen(navController, authViewModel)
+        }
+
+        composable("register") {
+            // ⭐ Pasar el mismo authViewModel
+            RegisterScreen(navController, authViewModel)
+        }
+
+        composable("home") {
+            val peliculaViewModel: PeliculaViewModel = viewModel(factory = peliculaViewModelFactory)
+            // ⭐ Pasar authViewModel a HomeScreen
+            HomeScreen(
+                viewModel = peliculaViewModel,
+                navController = navController,
+                authViewModel = authViewModel
+            )
+        }
+
+        // Ruta para detalles de película
+        composable(
+            route = "detalle_pelicula/{peliculaTitulo}",
+            arguments = listOf(navArgument("peliculaTitulo") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val peliculaTitulo = backStackEntry.arguments?.getString("peliculaTitulo") ?: ""
+            val peliculaViewModel: PeliculaViewModel = viewModel(factory = peliculaViewModelFactory)
+            DetallePeliculaScreen(
+                peliculaTitulo = peliculaTitulo,
+                viewModel = peliculaViewModel,
+                navController = navController
+            )
+        }
+    }
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import com.example.tallerintegrador.auth.AuthViewModel
+import com.example.tallerintegrador.data.local.TokenManager
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.Yellow
+
+@Composable
+fun PerfilScreen(
+    navController: NavController?,
+    authViewModel: AuthViewModel = viewModel() // ⭐ Añadimos AuthViewModel
+) {
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val tokenManager = remember { TokenManager(context.applicationContext) }
+
+    // ⭐ Obtener información del usuario desde TokenManager
+    val userName = tokenManager.getUserName() ?: "Usuario Demo"
+    val userEmail = tokenManager.getUserEmail() ?: "usuario@demo.com"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBlue)
+    ) {
+        // Header del perfil
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Yellow.copy(alpha = 0.1f))
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Avatar
+            Box(
+                modifier = Modifier
+                    .size(100.dp)
+                    .clip(CircleShape)
+                    .background(Yellow),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Person,
+                    contentDescription = "Avatar",
+                    tint = DarkBlue,
+                    modifier = Modifier.size(60.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ⭐ Mostrar nombre real del usuario
+            Text(
+                text = userName,
+                color = Yellow,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            // ⭐ Mostrar email real del usuario
+            Text(
+                text = userEmail,
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 16.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Estadísticas
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(label = "Vistas", value = "42")
+                VerticalDivider(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(40.dp),
+                    color = Color.White.copy(alpha = 0.3f)
+                )
+                StatItem(label = "Favoritas", value = "3")
+                VerticalDivider(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(40.dp),
+                    color = Color.White.copy(alpha = 0.3f)
+                )
+                StatItem(label = "Listas", value = "5")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Opciones del perfil
+        LazyColumn(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            item {
+                ProfileOption(
+                    icon = Icons.Filled.Person,
+                    title = "Editar Perfil",
+                    subtitle = "Actualiza tu información personal",
+                    onClick = { /* TODO: Editar perfil */ }
+                )
+            }
+
+            item {
+                ProfileOption(
+                    icon = Icons.Filled.Notifications,
+                    title = "Notificaciones",
+                    subtitle = "Configura tus preferencias",
+                    onClick = { /* TODO: Notificaciones */ }
+                )
+            }
+
+            item {
+                ProfileOption(
+                    icon = Icons.Filled.Lock,
+                    title = "Privacidad y Seguridad",
+                    subtitle = "Gestiona tu cuenta",
+                    onClick = { /* TODO: Privacidad */ }
+                )
+            }
+
+            item {
+                ProfileOption(
+                    icon = Icons.Filled.Settings,
+                    title = "Configuración",
+                    subtitle = "Ajustes de la aplicación",
+                    onClick = { /* TODO: Configuración */ }
+                )
+            }
+
+            item {
+                ProfileOption(
+                    icon = Icons.Filled.Info,
+                    title = "Acerca de",
+                    subtitle = "Versión 1.0.0",
+                    onClick = { /* TODO: Acerca de */ }
+                )
+            }
+
+            item {
+                // ⭐ Opción de cerrar sesión
+                ProfileOption(
+                    icon = Icons.AutoMirrored.Filled.ExitToApp,
+                    title = "Cerrar Sesión",
+                    subtitle = "Salir de tu cuenta",
+                    onClick = { showLogoutDialog = true },
+                    isDestructive = true
+                )
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+
+    // ⭐ Diálogo de confirmación de cierre de sesión
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = {
+                Text(
+                    text = "Cerrar Sesión",
+                    color = Yellow,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "¿Estás seguro que deseas cerrar sesión?",
+                    color = Color.White
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        // ⭐ CERRAR SESIÓN
+                        authViewModel.logout()
+                        // ⭐ Navegar a WelcomeScreen y limpiar el stack
+                        navController?.navigate("welcome") {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                ) {
+                    Text("Cerrar Sesión", color = Color.Red)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancelar", color = Yellow)
+                }
+            },
+            containerColor = DarkBlue,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+@Composable
+fun StatItem(label: String, value: String) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            color = Yellow,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = label,
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 14.sp
+        )
+    }
+}
+
+@Composable
+fun ProfileOption(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    isDestructive: Boolean = false
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.05f)
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        ),
+        onClick = onClick
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(if (isDestructive) Color.Red.copy(alpha = 0.2f) else Yellow.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = if (isDestructive) Color.Red else Yellow,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    color = if (isDestructive) Color.Red else Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp
+                )
+            }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Ir",
+                tint = Color.White.copy(alpha = 0.5f)
+            )
+        }
+    }
+}
+package com.example.tallerintegrador
+
+import android.net.Uri
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.TallerIntegradorTheme
+import com.example.tallerintegrador.ui.theme.Yellow
+import com.example.tallerintegrador.feature.favoritos.FavoritosViewModel
+import com.example.tallerintegrador.core.FavoritosViewModelFactory
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
+import android.app.Application
+import com.example.tallerintegrador.auth.AuthViewModel
+
+
+@Composable
+fun HomeScreen(
+    viewModel: PeliculaViewModel,
+    navController: NavController? = null,
+    authViewModel: AuthViewModel = viewModel()
+) {
+    val peliculas by viewModel.peliculas.collectAsState()
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        viewModel.getPeliculas()
+    }
+
+    val peliculasPorGenero = mutableMapOf<String, MutableList<pelicula>>()
+    peliculas.forEach { pelicula ->
+        pelicula.genre.split(',').forEach { genero ->
+            val trimmedGenero = genero.trim()
+            peliculasPorGenero.getOrPut(trimmedGenero) { mutableListOf() }.add(pelicula)
+        }
+    }
+
+    HomeScreenContent(
+        peliculasPorGenero = peliculasPorGenero,
+        selectedTab = selectedTab,
+        onTabSelected = { selectedTab = it },
+        viewModel = viewModel,
+        navController = navController,
+        authViewModel = authViewModel
+    )
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreenContent(
+    peliculasPorGenero: Map<String, List<pelicula>>,
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit,
+    viewModel: PeliculaViewModel? = null,
+    navController: NavController? = null,
+    authViewModel: AuthViewModel? = null
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("CinemasAguilasUas", color = Yellow) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = DarkBlue, // Color de fondo
+                    titleContentColor = Yellow, // Color del título
+                    actionIconContentColor = Color.White // Color de los iconos de acción
+                ),
+                actions = {
+                    TextButton(onClick = {
+                        // Ir a la pestaña de perfil
+                        onTabSelected(4)
+                    }) {
+                        Text("Mi perfil", color = Yellow)
+                    }
+                    TextButton(onClick = {
+                        // ⭐ Cerrar sesión desde el TopBar
+                        authViewModel?.logout()
+                        navController?.navigate("welcome") {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }) {
+                        Text("Cerrar sesión", color = Color.White)
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            BottomNavigationBar(
+                selectedTab = selectedTab,
+                onTabSelected = onTabSelected
+            )
+        },
+        containerColor = DarkBlue // <--- Parámetro correcto para el fondo
+    ) { padding ->
+        when (selectedTab) {
+            0 -> {
+                // Pantalla de Inicio
+                LazyColumn(modifier = Modifier.padding(padding)) {
+                    peliculasPorGenero.forEach { (genero, peliculasDelGenero) ->
+                        item {
+                            Text(
+                                text = genero,
+                                color = Yellow,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)
+                            )
+                        }
+                        item {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(peliculasDelGenero) { pelicula ->
+                                    MovieCard(
+                                        pelicula = pelicula,
+                                        onClick = {
+                                            val encodedTitulo = Uri.encode(pelicula.title)
+                                            navController?.navigate("detalle_pelicula/$encodedTitulo")
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            1 -> {
+                // Pantalla de Categorías
+                Box(modifier = Modifier.padding(padding)) {
+                    CategoriasScreen()
+                }
+            }
+            2 -> {
+                // Pantalla de Búsqueda
+                Box(modifier = Modifier.padding(padding)) {
+                    viewModel?.let { BusquedaScreen(it) }
+                }
+            }
+            3 -> {
+                val context = LocalContext.current
+                val favoritosViewModel: FavoritosViewModel = viewModel(
+                    factory = FavoritosViewModelFactory(context.applicationContext as Application)
+                )
+
+                // 🔥 Cargar favoritos SIEMPRE que se abra la pestaña
+                LaunchedEffect(Unit) {
+                    favoritosViewModel.cargarFavoritos()
+                }
+
+                Box(modifier = Modifier.padding(paddingValues = padding)) {
+                    FavoritosScreen(
+                        peliculaViewModel = viewModel,
+                        navController = navController,
+                        favoritosViewModel = favoritosViewModel   // <-- se lo pasamos
+                    )
+                }
+            }
+
+
+            4 -> {
+                // Pantalla de Perfil
+                Box(modifier = Modifier.padding(padding)) {
+                    authViewModel?.let {
+                        PerfilScreen(navController, it)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BottomNavigationBar(
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
+) {
+    NavigationBar(
+        containerColor = DarkBlue, // Color de fondo de la barra
+        contentColor = Yellow, // Color por defecto para el contenido
+        tonalElevation = 8.dp // Equivalente a 'elevation'
+    ) {
+        // Ítem de Inicio
+        NavigationBarItem(
+            icon = { Icon(Icons.Filled.Home, contentDescription = "Inicio") },
+            label = { Text("Inicio", fontSize = 11.sp) },
+            selected = selectedTab == 0,
+            onClick = { onTabSelected(0) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = Yellow,
+                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                selectedTextColor = Yellow,
+                unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                indicatorColor = DarkBlue.copy(alpha=0.2f) // Color del "círculo" indicador
+            )
+        )
+        // Ítem de Categorías
+        NavigationBarItem(
+            icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Categorías") },
+            label = { Text("Categorías", fontSize = 11.sp) },
+            selected = selectedTab == 1,
+            onClick = { onTabSelected(1) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = Yellow,
+                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                selectedTextColor = Yellow,
+                unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                indicatorColor = DarkBlue.copy(alpha=0.2f)
+            )
+        )
+        // Ítem de Búsqueda
+        NavigationBarItem(
+            icon = { Icon(Icons.Filled.Search, contentDescription = "Búsqueda") },
+            label = { Text("Búsqueda", fontSize = 11.sp) },
+            selected = selectedTab == 2,
+            onClick = { onTabSelected(2) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = Yellow,
+                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                selectedTextColor = Yellow,
+                unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                indicatorColor = DarkBlue.copy(alpha=0.2f)
+            )
+        )
+        // Ítem de Favoritos
+        NavigationBarItem(
+            icon = { Icon(Icons.Filled.Favorite, contentDescription = "Favoritos") },
+            label = { Text("Favoritos", fontSize = 11.sp) },
+            selected = selectedTab == 3,
+            onClick = { onTabSelected(3) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = Yellow,
+                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                selectedTextColor = Yellow,
+                unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                indicatorColor = DarkBlue.copy(alpha=0.2f)
+            )
+        )
+        // Ítem de Perfil
+        NavigationBarItem(
+            icon = { Icon(Icons.Filled.Person, contentDescription = "Perfil") },
+            label = { Text("Perfil", fontSize = 11.sp) },
+            selected = selectedTab == 4,
+            onClick = { onTabSelected(4) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = Yellow,
+                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                selectedTextColor = Yellow,
+                unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                indicatorColor = DarkBlue.copy(alpha=0.2f)
+            )
+        )
+    }
+}
+
+
+@Composable
+fun MovieCard(pelicula: pelicula, onClick: () -> Unit = {}) {
+    Column(
+        modifier = Modifier
+            .width(150.dp)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        AsyncImage( // <-- Componente moderno de Coil
+            model = pelicula.posterUrl, // Se usa el parámetro 'model'
+            contentDescription = pelicula.title,
+            modifier = Modifier
+                .width(150.dp)
+                .height(225.dp)
+                .clip(RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.Crop
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = pelicula.title,
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun HomeScreenPreview() {
+    val dummyPeliculas = listOf(
+        pelicula(id = 1,title = "The Dark Knight", description = "...", posterUrl = "url", videoUrl = "url", durationMinutes = 152, genre = "Acción, Crimen"),
+        pelicula(id = 2,title = "Mad Max: Fury Road", description = "...", posterUrl = "url", videoUrl = "url", durationMinutes = 120, genre = "Acción"),
+        pelicula(id = 3, title = "Shrek", description = "...", posterUrl = "url", videoUrl = "url", durationMinutes = 90, genre = "Animación"),
+        pelicula(id = 4,title = "Spider-Man: Into the Spider-Verse", description = "...", posterUrl = "url", videoUrl = "url", durationMinutes = 117, genre = "Animación")
+    )
+    val peliculasPorGenero = mutableMapOf<String, MutableList<pelicula>>()
+    dummyPeliculas.forEach { pelicula ->
+        pelicula.genre.split(',').forEach { genero ->
+            val trimmedGenero = genero.trim()
+            peliculasPorGenero.getOrPut(trimmedGenero) { mutableListOf() }.add(pelicula)
+        }
+    }
+
+    TallerIntegradorTheme {
+        HomeScreenContent(
+            peliculasPorGenero = peliculasPorGenero,
+            selectedTab = 0,
+            onTabSelected = {},
+            viewModel = null,
+            navController = null
+        )
+    }
+}
+package com.example.tallerintegrador
+
+import android.app.Application
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.core.FavoritosViewModelFactory
+import com.example.tallerintegrador.feature.favoritos.FavoritosViewModel
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.Yellow
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+
+
+@Composable
+fun FavoritosScreen(
+    peliculaViewModel: PeliculaViewModel?,
+    navController: NavController?,
+    favoritosViewModel: FavoritosViewModel
+)
+ {
+
+
+    val favoritos by favoritosViewModel.favoritos.collectAsState()
+
+    LaunchedEffect(Unit) {
+        favoritosViewModel.cargarFavoritos()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBlue)
+    ) {
+        if (favoritos.isEmpty()) {
+            Text(
+                text = "Todavía no tienes películas favoritas",
+                color = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.align(Alignment.Center)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(favoritos) { peli ->
+                    FavoritoItem(
+                        pelicula = peli,
+                        onClick = {
+                            val encodedTitulo = java.net.URLEncoder.encode(peli.title, "UTF-8")
+                            navController?.navigate("detalle_pelicula/$encodedTitulo")
+                        },
+                        onRemove = {
+                            favoritosViewModel.toggleFavorito(peli.id, true)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FavoritoItem(
+    pelicula: pelicula,
+    onClick: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkBlue.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = pelicula.posterUrl,
+                contentDescription = pelicula.title,
+                modifier = Modifier
+                    .size(90.dp)
+                    .aspectRatio(2f / 3f),
+                contentScale = ContentScale.Crop
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = pelicula.title,
+                    color = Yellow,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = pelicula.genre,
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Eliminar de favoritos",
+                    tint = Color.Red.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.background
+import android.app.Application
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.example.tallerintegrador.core.FavoritosViewModelFactory
+import com.example.tallerintegrador.feature.favoritos.FavoritosViewModel
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.Yellow
+import androidx.compose.ui.layout.ContentScale
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DetallePeliculaScreen(
+    peliculaTitulo: String,
+    viewModel: PeliculaViewModel,
+    navController: NavController,
+
+) {
+
+    val peliculas by viewModel.peliculas.collectAsState()
+    var isFavorite by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val favoritosViewModel: FavoritosViewModel = viewModel(
+        factory = FavoritosViewModelFactory(context.applicationContext as Application)
+    )
+
+    LaunchedEffect(Unit) {
+        if (peliculas.isEmpty()) {
+            viewModel.getPeliculas()
+        }
+    }
+
+    val pelicula = peliculas.find { it.title == peliculaTitulo }
+
+    if (pelicula == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DarkBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(color = Yellow)
+        }
+        return
+    }
+    LaunchedEffect(pelicula.id) {
+        isFavorite = favoritosViewModel.esFavorito(pelicula.id)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    navigationIconContentColor = Color.White,
+                    actionIconContentColor = Color.White
+                ),
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Volver"
+                        )
+                    }
+                },
+                actions = {
+                    // ⭐ BOTÓN DE FAVORITO FUNCIONAL
+                    IconButton(onClick = {
+                        val current = isFavorite
+                        favoritosViewModel.toggleFavorito(pelicula.id, current)
+                        isFavorite = !current
+                    }) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = "Favorito",
+                            tint = if (isFavorite) Color.Red else Color.White
+                        )
+                    }
+
+                    IconButton(onClick = { /* Compartir */ }) {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = "Compartir"
+                        )
+                    }
+                }
+            )
+        },
+        containerColor = DarkBlue
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(padding)
+        ) {
+            // Póster con gradiente
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(400.dp)
+            ) {
+                AsyncImage(
+                    model = pelicula.posterUrl,
+                    contentDescription = pelicula.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    DarkBlue.copy(alpha = 0.7f),
+                                    DarkBlue
+                                ),
+                                startY = 200f
+                            )
+                        )
+                )
+            }
+
+            // Información de la película
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = pelicula.title,
+                    color = Yellow,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    InfoChip(text = pelicula.genre)
+                    InfoChip(text = "${pelicula.durationMinutes} min")
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Sinopsis",
+                    color = Yellow,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = pelicula.description,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    lineHeight = 24.sp
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Tráiler",
+                    color = Yellow,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(
+                    onClick = {
+                        val url = pelicula.videoUrl
+                        val customTabsIntent = CustomTabsIntent.Builder().build()
+                        customTabsIntent.launchUrl(context, url.toUri())
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = "Ver tráiler",
+                        tint = DarkBlue
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Ver tráiler",
+                        color = DarkBlue,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Button(
+                    onClick = { /* Reproducir película */ },
+                    colors = ButtonDefaults.buttonColors(containerColor = Yellow),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = "Reproducir",
+                        tint = DarkBlue,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Reproducir película",
+                        color = DarkBlue,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun InfoChip(text: String) {
+    Surface(
+        color = Yellow.copy(alpha = 0.2f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = text,
+            color = Yellow,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+    }
+}
+
+
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.CardDefaults
+
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Place
+
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.Yellow
+
+data class Categoria(
+    val nombre: String,
+    val icon: ImageVector,
+    val color: Color
+)
+
+@Composable
+fun CategoriasScreen() {
+    val categorias = listOf(
+        Categoria("Acción", Icons.Filled.Star, Color(0xFFFF5722)),
+        Categoria("Comedia", Icons.Filled.Face, Color(0xFFFFC107)),
+        Categoria("Drama", Icons.Filled.Favorite, Color(0xFFE91E63)),
+        Categoria("Terror", Icons.Filled.Warning, Color(0xFF9C27B0)),
+        Categoria("Ciencia Ficción", Icons.AutoMirrored.Filled.Send, Color(0xFF2196F3)),
+        Categoria("Romance", Icons.Filled.FavoriteBorder, Color(0xFFF48FB1)),
+        Categoria("Thriller", Icons.Filled.Lock, Color(0xFF607D8B)),
+        Categoria("Animación", Icons.Filled.Star, Color(0xFF4CAF50)),
+        Categoria("Aventura", Icons.Filled.Place, Color(0xFF00BCD4)),
+        Categoria("Fantasía", Icons.Filled.Info, Color(0xFF673AB7)),
+        Categoria("Documental", Icons.Filled.DateRange, Color(0xFF795548)),
+        Categoria("Crimen", Icons.Filled.Build, Color(0xFF424242))
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBlue)
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Explorar Categorías",
+            color = Yellow,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            items(categorias) { categoria ->
+                CategoriaCard(categoria)
+            }
+        }
+    }
+}
+
+@Composable
+fun CategoriaCard(categoria: Categoria) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+            .height(120.dp)
+            .clickable { /* TODO: Navegar a películas por categoría */ },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = categoria.color.copy(alpha = 0.2f) // 'backgroundColor' se convierte en 'containerColor'
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 4.dp // 'elevation' se configura dentro de un objeto
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = categoria.icon,
+                contentDescription = categoria.nombre,
+                tint = categoria.color,
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = categoria.nombre,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+package com.example.tallerintegrador
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+
+import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
+import com.example.tallerintegrador.data.model.pelicula
+import com.example.tallerintegrador.feature.peliculas.PeliculaViewModel
+import com.example.tallerintegrador.ui.theme.DarkBlue
+import com.example.tallerintegrador.ui.theme.Yellow
+
+@Composable
+fun BusquedaScreen(viewModel: PeliculaViewModel) {
+    var searchQuery by remember { mutableStateOf("") }
+    val peliculas by viewModel.peliculas.collectAsState()
+
+    val peliculasFiltradas = if (searchQuery.isEmpty()) {
+        emptyList()
+    } else {
+        peliculas.filter {
+            it.title.contains(searchQuery, ignoreCase = true) ||
+                    it.genre.contains(searchQuery, ignoreCase = true) ||
+                    it.description.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBlue)
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Buscar Películas",
+            color = Yellow,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        // Barra de búsqueda
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Buscar por título, género...", color = Color.White.copy(alpha = 0.6f)) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "Buscar",
+                    tint = Yellow
+                )
+            },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Limpiar",
+                            tint = Yellow
+                        )
+                    }
+                }
+            },
+            // --- CÓDIGO NUEVO Y CORRECTO ---
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedTextColor = Color.White,
+                focusedTextColor = Color.White,
+                cursorColor = Yellow,
+                focusedBorderColor = Yellow,
+                unfocusedBorderColor = Yellow.copy(alpha = 0.5f),
+                unfocusedPlaceholderColor = Color.White.copy(alpha = 0.6f),
+                focusedPlaceholderColor = Color.White.copy(alpha = 0.6f),
+                unfocusedLeadingIconColor = Yellow,
+                focusedLeadingIconColor = Yellow,
+                unfocusedTrailingIconColor = Yellow,
+                focusedTrailingIconColor = Yellow,
+            ),
+
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Resultados de búsqueda
+        if (searchQuery.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = "Buscar",
+                        tint = Yellow.copy(alpha = 0.5f),
+                        modifier = Modifier.size(80.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Busca tus películas favoritas",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 18.sp
+                    )
+                }
+            }
+        } else if (peliculasFiltradas.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No se encontraron resultados",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 18.sp
+                )
+            }
+        } else {
+            Text(
+                text = "${peliculasFiltradas.size} resultado(s)",
+                color = Yellow,
+                fontSize = 16.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(peliculasFiltradas) { pelicula ->
+                    SearchResultItem(pelicula)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchResultItem(pelicula: pelicula) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { /* TODO: Ver detalles de la película */ },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.1f)
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 4.dp
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = rememberAsyncImagePainter(pelicula.posterUrl),
+                contentDescription = pelicula.title,
+                modifier = Modifier
+                    .width(80.dp)
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = pelicula.title,
+                    color = Yellow,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = pelicula.genre,
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${pelicula.durationMinutes} min",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = pelicula.description,
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 13.sp,
+                    maxLines = 2
+                )
+            }
+        }
+    }
+}
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.kapt")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.example.tallerintegrador"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.example.tallerintegrador"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+dependencies {
+    implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:11.1.0")
+    implementation("androidx.browser:browser:1.7.0")
+
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.3")
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0") // Dependencia añadida
+
+    // Coil para cargar imágenes
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+}
+[versions]
+agp = "8.13.0"
+kotlin = "2.0.21"
+coreKtx = "1.17.0"
+junit = "4.13.2"
+junitVersion = "1.3.0"
+espressoCore = "3.7.0"
+lifecycleRuntimeKtx = "2.9.4"
+activityCompose = "1.11.0"
+composeBom = "2024.09.00"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

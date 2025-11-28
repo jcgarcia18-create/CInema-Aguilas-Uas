@@ -21,5 +21,6 @@ class HistorialVista extends Model
     protected $fillable = [
         'perfil_id',      // El _id del perfil de MongoDB
         'pelicula_id',    // El id de la película de PostgreSQL
+        'nombre_pelicula',// El nombre de la película reproducida
     ];
 }

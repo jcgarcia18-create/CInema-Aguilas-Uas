@@ -23,10 +23,16 @@ function openMovieTab(peliculaJson) {
             </style>
             <script>
                 function clickReproducir() {
+                    // Registrar la vista y redirigir a la URL del video
                     if (window.opener && window.opener.logView) {
                         window.opener.logView(${pelicula.id}, "${pelicula.video_url}"); 
                     }
-                    window.location.href = "${pelicula.video_url}";
+                    // Abrir el video en una nueva pestaña si es una URL válida
+                    if ('${pelicula.video_url}'.startsWith('http')) {
+                        window.open('${pelicula.video_url}', '_blank');
+                    } else {
+                        window.location.href = '${pelicula.video_url}';
+                    }
                 }
             <\/script>
         </head>
@@ -46,13 +52,20 @@ function openMovieTab(peliculaJson) {
 }
 
 function logView(peliculaId, videoUrl) {
-    window.open(videoUrl, '_blank');
+    // Asegura que peliculaId sea un número
+    const idNum = typeof peliculaId === 'string' ? parseInt(peliculaId, 10) : peliculaId;
+    // Validar la URL antes de abrir
+    if (videoUrl && videoUrl.startsWith('http')) {
+        window.open(videoUrl, '_blank');
+    } else {
+        console.error('URL de video no válida:', videoUrl);
+    }
     const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     if (!token) {
         console.error('¡Error de CSRF! No se encontró la meta-etiqueta.');
         return false;
     }
-    const data = { pelicula_id: peliculaId };
+    const data = { pelicula_id: idNum };
     fetch(window.dashboardPlaybackLogRoute, {
         method: 'POST',
         headers: {
@@ -71,7 +84,7 @@ function logView(peliculaId, videoUrl) {
     })
     .then(data => {
         if (data.success) {
-            console.log('Historial guardado para pelicula ID:', peliculaId);
+            console.log('Historial guardado para pelicula ID:', idNum);
         } else {
             console.error('Error de lógica al guardar historial:', data.error);
         }
